@@ -1,25 +1,25 @@
-// carga las variables de entorno
-require('dotenv').config();
 const path = require('path');
 
 const express = require('express');
 const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
+const session = require('express-session');
+const MongoDBStore = require('connect-mongodb-session')(session);
+const csrf = require('csurf');
+const flash = require('connect-flash');
 
 const errorController = require('./controllers/error');
 const User = require('./models/user');
 
-const cookieparser = require('cookie-parser');
-const session = require('express-session');
-const MongoDBStore = require('connect-mongodb-session')(session);
+const MONGODB_URI =
+  'mongodb+srv://melisa:A3v7nWqPQmeZMmrg@cluster0-c5p8t.mongodb.net/shop';
 
 const app = express();
-
-// where the sessions will be stored
 const store = new MongoDBStore({
-    uri: process.env.MONGODB_URI,
-    collection: 'sessions'
+  uri: MONGODB_URI,
+  collection: 'sessions'
 });
+const csrfProtection = csrf();
 
 app.set('view engine', 'ejs');
 app.set('views', 'views');
@@ -30,21 +30,34 @@ const authRoutes = require('./routes/auth');
 
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(
+  session({
+    secret: 'my secret',
+    resave: false,
+    saveUninitialized: false,
+    store: store
+  })
+);
+app.use(csrfProtection);
+app.use(flash());
 
 app.use((req, res, next) => {
-    User.findById('5e5149a5ff913d1844145e91')
-        .then(user => {
-            req.user = user;
-            next();
-        })
-        .catch(err => console.log(err));
+  if (!req.session.user) {
+    return next();
+  }
+  User.findById(req.session.user._id)
+    .then(user => {
+      req.user = user;
+      next();
+    })
+    .catch(err => console.log(err));
 });
 
-// cookies
-app.use(cookieparser());
-// session
-app.use(session({ secret: 'my secret', resave: false, saveUninitialized: false, store: store }));
-
+app.use((req, res, next) => {
+  res.locals.isAuthenticated = req.session.isLoggedIn;
+  res.locals.csrfToken = req.csrfToken();
+  next();
+});
 
 app.use('/admin', adminRoutes);
 app.use(shopRoutes);
@@ -52,28 +65,11 @@ app.use(authRoutes);
 
 app.use(errorController.get404);
 
-mongoose.connect(process.env.MONGODB_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true
-    })
-    .then((result) => {
-        // creo un usuario si no existe
-        User.findOne().then(user => {
-            if (!user) {
-                const user = new User({
-                    name: 'Melisa',
-                    email: 'melisa@gmail.com',
-                    cart: {
-                        items: [],
-                        quantity: 0
-                    }
-                });
-                user.save();
-            }
-        }).catch(err => { throw err });
-
-        app.listen(3000);
-    }).catch((err) => {
-        console.log(err);
-        throw err;
-    });
+mongoose
+  .connect(MONGODB_URI)
+  .then(result => {
+    app.listen(3000);
+  })
+  .catch(err => {
+    console.log(err);
+  });
